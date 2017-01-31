@@ -1,0 +1,35 @@
+#!/bin/bash
+cd /tmp
+curl https://amazon-ssm-us-west-2.s3.amazonaws.com/latest/linux_amd64/amazon-ssm-agent.rpm -o amazon-ssm-agent.rpm
+yum install -y amazon-ssm-agent.rpm
+sudo mkdir /media/elasticsearchvolume
+
+# Determine instance id and instance lifecycle via aws cli command
+INSTANCEID="$(curl http://169.254.169.254/latest/meta-data/instance-id)"
+export AWS_DEFAULT_REGION=us-west-2
+RACK="$(aws ec2 describe-instances --instance-ids $INSTANCEID --query 'Reservations[0].Instances[*].[InstanceLifecycle]' --output text)"
+#sudo mkfs -t /dev/xvdb
+sudo mount /dev/xvdb /media/elasticsearchvolume/
+sudo sh -c "echo '/dev/xvdb /media/elasticsearchvolume ext4 defaults,nofail 0 0' >> /etc/fstab"
+sudo rpm -i https://download.elastic.co/elasticsearch/release/org/elasticsearch/distribution/rpm/elasticsearch/2.3.3/elasticsearch-2.3.3.rpm
+sleep 2
+sudo chown elasticsearch: /media/elasticsearchvolume
+sudo chkconfig --add elasticsearch
+sleep 2
+cd /usr/share/elasticsearch/
+yes | sudo bin/plugin install cloud-aws
+sleep 2
+sudo sh -c "echo 'ES_HEAP_SIZE=10g' >> /etc/sysconfig/elasticsearch"
+sudo sh -c "echo 'MAX_LOCKED_MEMORY=unlimited' >> /etc/sysconfig/elasticsearch"
+PRIVATEIP="$(curl http://instance-data/latest/meta-data/local-ipv4)"
+sudo sh -c "echo 'cluster.name : esonaws' >> /etc/elasticsearch/elasticsearch.yml"
+sudo sh -c "echo 'bootstrap.mlockall : true' >> /etc/elasticsearch/elasticsearch.yml"
+# You will need to type in the private ip of your Master node below
+sleep 2
+sudo sh -c "echo 'discovery.zen.ping.unicast.hosts : [\""$PRIVATEIP"\"]' >> /etc/elasticsearch/elasticsearch.yml"
+sudo sh -c "echo 'network.host : [\"127.0.0.1\",\""$PRIVATEIP"\"]' >> /etc/elasticsearch/elasticsearch.yml"
+sudo sh -c "echo 'path.data : /media/elasticsearchvolume' >> /etc/elasticsearch/elasticsearch.yml"
+sudo sh -c "echo 'node.rack_id : "$RACK"' >> /etc/elasticsearch/elasticsearch.yml"
+sudo sh -c "echo 'cluster.routing.allocation.awareness.attributes: rack_id' >> /etc/elasticsearch/elasticsearch.yml"
+sudo chown elasticsearch: /media/elasticsearchvolume
+sudo service elasticsearch start
